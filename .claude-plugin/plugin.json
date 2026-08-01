@@ -1,0 +1,19 @@
+{
+  "name": "soybeanjs-skills",
+  "description": "SoybeanJS 团队的 Agent Skills 集合:TypeScript 函数式风格规范与 Vue SFC 结构规范",
+  "version": "0.1.0",
+  "author": {
+    "name": "SoybeanJS",
+    "url": "https://github.com/soybeanjs"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/soybeanjs/skills",
+  "homepage": "https://github.com/soybeanjs/skills",
+  "keywords": [
+    "agent-skills",
+    "typescript",
+    "vue",
+    "coding-style",
+    "frontend"
+  ]
+}

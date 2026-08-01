@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "soybeanjs-skills",
+  "version": "0.1.0",
+  "description": "SoybeanJS Agent Skills: TypeScript functional style & Vue SFC structure guidelines",
+  "owner": {
+    "name": "Soybean",
+    "email": "soybeanjs@outlook.com",
+    "url": "https://github.com/soybeanjs"
+  },
+  "plugins": [
+    {
+      "name": "soybeanjs-skills",
+      "version": "0.1.0",
+      "description": "Agent skills for SoybeanJS: TypeScript 函数式风格规范与 Vue SFC 结构规范",
+      "category": "frontend",
+      "source": "./",
+      "author": {
+        "name": "SoybeanJS",
+        "url": "https://github.com/soybeanjs"
+      },
+      "homepage": "https://github.com/soybeanjs/skills",
+      "repository": "https://github.com/soybeanjs/skills",
+      "license": "MIT",
+      "keywords": [
+        "agent-skills",
+        "soybeanjs",
+        "typescript",
+        "vue",
+        "coding-style",
+        "frontend"
+      ]
+    }
+  ]
+}
