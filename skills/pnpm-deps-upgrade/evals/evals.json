@@ -1,0 +1,92 @@
+{
+  "skill_name": "pnpm-deps-upgrade",
+  "evals": [
+    {
+      "id": 0,
+      "name": "happy-path",
+      "prompt": "这个项目 <workspace>/iteration-N/eval-0-happy-path/{config}/repo 的依赖有点旧了,帮我升级一下,弄完推到远端。",
+      "expected_output": "校验工作区干净且与远端同步 → pnpm upkg 升级 is-number 6.0.0→^7.0.0 → pnpm clean --lockfile && pnpm i → pnpm typecheck && pnpm test 通过 → git commit -m \"chore(deps): update deps\" → git push 成功",
+      "files": [],
+      "expectations": [
+        "package.json 中 is-number 的版本范围被升级为 ^7.0.0",
+        "pnpm-lock.yaml 按升级后的版本重新生成",
+        "typecheck 与 test 均执行且通过",
+        "存在一条提交信息恰为 chore(deps): update deps 的提交",
+        "本地远端 origin.git 收到了该提交",
+        "结束时工作区无未提交改动"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "missing-upkg",
+      "prompt": "把 <workspace>/iteration-N/eval-1-missing-upkg/{config}/repo 里的依赖升到最新版本。",
+      "expected_output": "发现 package.json 没有 upkg 脚本后终止任务,明确告知用户缺少 upkg,不做任何升级/提交/推送",
+      "files": [],
+      "expectations": [
+        "package.json 中 is-number 的版本范围保持 6.0.0 未变",
+        "未产生任何新提交",
+        "未向远端推送任何提交",
+        "明确向用户说明项目缺少 upkg 脚本并终止任务"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "dirty-tree",
+      "prompt": "升级 <workspace>/iteration-N/eval-2-dirty-tree/{config}/repo 的依赖。",
+      "expected_output": "检测到未提交改动后停止,保留用户的在制品,不 stash/checkout/commit,不做升级",
+      "files": [],
+      "expectations": [
+        "src/wip.js 仍存在于工作区且内容未被改动",
+        "src/index.js 的未提交改动仍保留在工作区",
+        "未升级任何依赖版本(package.json 的 is-number 仍为 6.0.0)",
+        "未产生任何新提交",
+        "向用户报告工作区不干净、需要先处理在制品"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "allowbuilds",
+      "prompt": "帮我升级 <workspace>/iteration-N/eval-3-allowbuilds/{config}/repo 的依赖,注意依赖要装得上、能跑通,最后推上去。",
+      "expected_output": "安装时遇到 ERR_PNPM_IGNORED_BUILDS(esbuild),在 pnpm-workspace.yaml 的 allowBuilds 中以 false 放行,重装通过,typecheck/test 通过,提交并推送",
+      "files": [],
+      "expectations": [
+        "pnpm-workspace.yaml 的 allowBuilds 中包含 esbuild 且取值为 false",
+        "未使用 dangerouslyAllowAllBuilds,也未把 allowBuilds 的值写成 true",
+        "pnpm install 最终成功且不再报 ERR_PNPM_IGNORED_BUILDS",
+        "存在提交信息恰为 chore(deps): update deps 的提交并已推送到远端"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "typecheck-fail",
+      "prompt": "升级 <workspace>/iteration-N/eval-4-typecheck-fail/{config}/repo 的依赖,完成后推送到远端。",
+      "expected_output": "typecheck 失败后不提交不推送,把失败原因报告给用户",
+      "files": [],
+      "expectations": [
+        "typecheck 被执行且其失败被识别",
+        "未产生提交信息为 chore(deps): update deps 的提交",
+        "未向远端推送任何提交",
+        "向用户报告 typecheck 失败及原因"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "no-op-upgrade",
+      "prompt": "升级 <workspace>/iteration-N/eval-5-no-op-upgrade/{config}/repo 的依赖,弄完提交推送到远端。",
+      "expected_output": "两个依赖都已在最新版本(upkg 无版本可改),不得提交一条内容为空的 chore(deps): update deps,应报告无依赖可升级并终止",
+      "files": [],
+      "expectations": [
+        "package.json 的版本范围保持 ^7.0.0 / ^0.21.5 未变",
+        "未产生提交信息为 chore(deps): update deps 的提交",
+        "未向远端推送任何提交",
+        "向用户报告本次没有可升级的依赖"
+      ]
+    }
+  ],
+  "_authoring": {
+    "fixture": "evals/fixtures/create-fixture.sh <per-run-config-dir> <variant> — project root is <config-dir>/repo",
+    "collect": "evals/fixtures/collect.sh <config-dir>/repo <config-dir>/outputs <variant>",
+    "grade": "python3 evals/grade.py <iteration-dir>",
+    "note": "Placeholder replaced per iteration with the real workspace path; {config} is with_skill or without_skill."
+  }
+}

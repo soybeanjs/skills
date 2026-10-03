@@ -1,6 +1,6 @@
 {
   "name": "soybeanjs-skills",
-  "description": "SoybeanJS 团队的 Agent Skills 集合:TypeScript 函数式风格规范与 Vue SFC 结构规范",
+  "description": "SoybeanJS 团队的 Agent Skills 集合:TypeScript 函数式风格规范、Vue SFC 结构规范与 pnpm 依赖升级流程",
   "version": "0.1.0",
   "author": {
     "name": "SoybeanJS",
@@ -13,6 +13,8 @@
     "agent-skills",
     "typescript",
     "vue",
+    "pnpm",
+    "dependency-upgrade",
     "coding-style",
     "frontend"
   ]
