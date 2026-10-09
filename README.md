@@ -15,7 +15,7 @@ SoybeanJS 团队的 Agent Skills 集合，为 AI Agent 提供统一的前端编�
 | --- | --- | --- |
 | [`typescript-functional-style`](skills/typescript-functional-style/SKILL.md) | `**/*.{ts,tsx,js,jsx}` | TypeScript 函数式风格规范：优先纯函数与组合，限制可变性，类型必须精确，保持声明式数据变换。 |
 | [`vue-sfc-structure`](skills/vue-sfc-structure/SKILL.md) | `**/*.vue` | Vue SFC 结构规范：`script setup` 组织顺序与职责分层，涵盖 `shallowRef` 选择、template 绑定函数、attrs 继承等最佳实践。 |
-| [`pnpm-deps-upgrade`](skills/pnpm-deps-upgrade/SKILL.md) | pnpm 项目 | pnpm 依赖升级流程：校验工作区干净且同步 → `pnpm upkg` → 重装依赖并修复 `allowBuilds` 构建拦截 → typecheck/test → 提交推送。 |
+| [`pnpm-deps-upgrade`](skills/pnpm-deps-upgrade/SKILL.md) | pnpm 项目 | pnpm 依赖升级流程：校验工作区干净且同步 → `pnx npm-check-updates -u [-w]` → 重装依赖并修复 `allowBuilds` 构建拦截 → typecheck/test → 提交推送。 |
 
 前两个规范配套使用：前者约束 TS/JS 逻辑代码的写法，后者约束 Vue 组件的脚本组织与分层。`pnpm-deps-upgrade` 面向任务流程，在用户要求升级项目依赖时触发。
 
