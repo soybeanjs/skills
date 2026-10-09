@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
   "name": "soybeanjs-skills",
   "version": "0.1.0",
-  "description": "SoybeanJS Agent Skills: TypeScript functional style, Vue SFC structure & pnpm dependency upgrade workflow",
+  "description": "SoybeanJS Agent Skills: TypeScript functional style, Vue SFC structure, pnpm dependency upgrade & standard project migration",
   "owner": {
     "name": "Soybean",
     "email": "soybeanjs@outlook.com",
@@ -12,7 +12,7 @@
     {
       "name": "soybeanjs-skills",
       "version": "0.1.0",
-      "description": "Agent skills for SoybeanJS: TypeScript 函数式风格规范、Vue SFC 结构规范与 pnpm 依赖升级流程",
+      "description": "Agent skills for SoybeanJS: TypeScript 函数式风格规范、Vue SFC 结构规范、pnpm 依赖升级流程与标准工程模板迁移",
       "category": "frontend",
       "source": "./",
       "author": {
@@ -29,6 +29,8 @@
         "vue",
         "pnpm",
         "dependency-upgrade",
+        "project-migration",
+        "vite-plus",
         "coding-style",
         "frontend"
       ]
