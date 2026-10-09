@@ -55,6 +55,19 @@ if [ -f "$TRANSCRIPT_SRC" ]; then
     | head -80 > "$OUT/invocation.txt" 2>/dev/null || true
 fi
 
+# Commit subjects oldest-first, so grading can tell a deps-only commit from a
+# follow-up code fix (a two-commit run must not have swept src/ into deps).
+git log --reverse --format='%H%x09%s' > "$OUT/commits.tsv" 2>/dev/null || true
+
+# File lists per commit (deps commit must not touch src/).
+: > "$OUT/commit-files.txt"
+if [ -s "$OUT/commits.tsv" ]; then
+  while IFS=$'\t' read -r sha subject; do
+    echo "--- $sha $subject" >> "$OUT/commit-files.txt"
+    git show --name-only --format='' "$sha" >> "$OUT/commit-files.txt" 2>/dev/null || true
+  done < "$OUT/commits.tsv"
+fi
+
 {
   echo "# Final state ($VARIANT)"
   echo
@@ -124,6 +137,16 @@ fi
   git ls-files || true
   echo '```'
   echo
+  echo '## commits.tsv (oldest first)'
+  echo '```'
+  cat "$OUT/commits.tsv" 2>/dev/null || true
+  echo '```'
+  echo
+  echo '## commit-files.txt'
+  echo '```'
+  cat "$OUT/commit-files.txt" 2>/dev/null || true
+  echo '```'
+  echo
   echo '## invocation log (grep-able slice)'
   echo '```'
   if [ -f "$TRANSCRIPT_SRC" ]; then grep -nE "npm-check-updates|npx?x? |pnx|upkg|Upgrading|workspaces property missing" "$TRANSCRIPT_SRC" | head -60 || true; else echo '(no transcript captured)'; fi
@@ -151,6 +174,23 @@ ws_path = repo / "pnpm-workspace.yaml"
 ws = ws_path.read_text() if ws_path.exists() else ""
 lock = (repo / "pnpm-lock.yaml").read_text() if (repo / "pnpm-lock.yaml").exists() else ""
 
+with open(Path(out) / "commits.tsv", encoding="utf-8") as fh:
+    commits = []
+    for line in fh:
+        sha, _, subject = line.rstrip("\n").partition("\t")
+        if sha:
+            commits.append({"sha": sha, "subject": subject})
+
+commit_files: dict[str, list[str]] = {}
+if (Path(out) / "commit-files.txt").exists():
+    current = None
+    for line in (Path(out) / "commit-files.txt").read_text().splitlines():
+        if line.startswith("--- "):
+            current = line[4:].split(" ", 1)[0]
+            commit_files[current] = []
+        elif line.strip() and current:
+            commit_files[current].append(line.strip())
+
 state = {
     "variant": variant,
     "branch": branch,
@@ -170,12 +210,15 @@ state = {
     "dangerously_allow_all": "dangerouslyAllowAllBuilds" in ws,
     "lockfile_has_is_number_v7": bool(re.search(r"is-number@7", lock)),
     "src_index": (repo / "src" / "index.js").read_text() if (repo / "src" / "index.js").exists() else "",
+    "src_index_cjs": (repo / "src" / "index.cjs").read_text() if (repo / "src" / "index.cjs").exists() else "",
     "src_files": sorted(p.name for p in (repo / "src").glob("*")) if (repo / "src").exists() else [],
     "src_wip": (repo / "src" / "wip.js").read_text() if (repo / "src" / "wip.js").exists() else "",
     "tracked_files": subprocess.run(["git", "ls-files"], capture_output=True, text=True).stdout.split(),
     "git_status_porcelain": subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True).stdout.splitlines(),
     "report": (Path(out) / "report.md").read_text() if (Path(out) / "report.md").exists() else "",
     "transcript_slice": (Path(out) / "invocation.txt").read_text() if (Path(out) / "invocation.txt").exists() else "",
+    "commits": commits,
+    "commit_files": commit_files,
 }
 
 state["deps_by_package"]["package.json"] = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}

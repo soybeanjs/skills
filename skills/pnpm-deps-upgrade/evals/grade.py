@@ -59,7 +59,55 @@ def grade(run: dict) -> dict:
         """Deps declared in one specific package.json, relative to the repo root."""
         return (s.get("deps_by_package") or {}).get(package_json_path, {})
 
-    if v == "happy":
+    commits = s.get("commits") or []
+    commit_files = s.get("commit_files") or {}
+
+    def subjects() -> list:
+        return [c["subject"] for c in commits]
+
+    def files_of(subject: str) -> list:
+        """Paths touched by the newest commit whose subject is exactly `subject`."""
+        for c in reversed(commits):
+            if c["subject"] == subject:
+                return commit_files.get(c["sha"], [])
+        return []
+
+    def is_deps_only_commit(subject: str) -> bool:
+        """The deps commit must carry only dependency manifests, never src/."""
+        files = files_of(subject)
+        if not files:
+            return False
+        return all(
+            f.endswith("package.json") or f == "pnpm-lock.yaml" or f.endswith("pnpm-workspace.yaml")
+            for f in files
+        )
+
+    if v == "code-fix":
+        add("package.json 中 is-number 升到 7.0.0、uuid 升到 14.x",
+            deps.get("is-number") == "7.0.0" and str(deps.get("uuid", "")).startswith("14."),
+            f"is-number={deps.get('is-number')!r}, uuid={deps.get('uuid')!r}")
+        add("未对非工作区使用 -w(执行记录中不出现 workspaces property missing from package.json)",
+            not invocation_seen("workspaces property missing from package.json"),
+            "invocation log shows the -w failure: "
+            + ("yes" if invocation_seen("workspaces property missing from package.json") else "no"))
+        add("★ chore(deps): update deps 提交只含依赖清单,未混入 src/ 代码",
+            is_deps_only_commit("chore(deps): update deps"),
+            f"files={files_of('chore(deps): update deps')}")
+        add("★ 代码修复另外单独成提交(deps 提交之后还有一条非 deps 提交)",
+            len(commits) >= 2 and commits[-1]["subject"] not in ("", "chore(deps): update deps"),
+            f"subjects={subjects()}")
+        add("★ src/index.cjs 已适配 uuid 14(不再 require('uuid/v4'))",
+            "uuid/v4" not in (s.get("src_index_cjs") or "") and bool(s.get("src_index_cjs")),
+            f"uuid/v4 still present: {'uuid/v4' in (s.get('src_index_cjs') or '')}")
+        add("typecheck 与 test 均执行且通过",
+            s["typecheck_exit"] == "0" and s["test_exit"] == "0",
+            f"typecheck_exit={s['typecheck_exit']}, test_exit={s['test_exit']}")
+        add("两个提交都已推送到远端",
+            pushed_head(), f"remote_head={s['remote_head']}, head={s['head']}")
+        add("结束时工作区无未提交改动",
+            not s["git_status_porcelain"], f"porcelain={s['git_status_porcelain']}")
+
+    elif v == "happy":
         add("packages/lib/package.json 中 is-number 的版本范围被升级为 ^7.0.0",
             child_deps("packages/lib/package.json").get("is-number") == "^7.0.0",
             f"packages/lib is-number={child_deps('packages/lib/package.json').get('is-number')!r}")
@@ -74,6 +122,9 @@ def grade(run: dict) -> dict:
         add("存在一条提交信息恰为 chore(deps): update deps 的提交",
             s["last_subject"] == "chore(deps): update deps",
             f"last_subject={s['last_subject']!r}, commit_count={s['commit_count']}")
+        add("★ chore(deps): update deps 提交只含依赖清单(工作区场景不应混入其他文件)",
+            is_deps_only_commit("chore(deps): update deps"),
+            f"files={files_of('chore(deps): update deps')}")
         add("远端 origin.git 收到了该提交",
             pushed_head(), f"remote_head={s['remote_head']}, head={s['head']}")
         add("结束时工作区无未提交改动",

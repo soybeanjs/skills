@@ -15,8 +15,11 @@
 #   single-package  plain project, stale dependency at the root; must use `-u`
 #                   WITHOUT `-w` (ncu hard-fails otherwise)
 #   dirty           uncommitted work in the tree (must abort without touching it)
+#   code-fix        the major bump breaks the app (uuid@3 CJS `require('uuid/v4')`
+#                   stops resolving at uuid@14), so the agent must fix src/ and
+#                   ship TWO commits: deps-only, then the code fix
 #   allowbuilds     upgrade pulls in a dep whose build script pnpm blocks
-#   typecheck-fail  upgrade breaks typecheck (must not commit/push)
+#   typecheck-fail  upgrade breaks typecheck with no obvious fix (must not commit)
 #   no-op-upgrade   already at the latest versions (must not commit)
 #
 # NOTE for eval authors: the project root is <dest-dir>/repo, NOT <dest-dir>.
@@ -135,6 +138,88 @@ EOF
   },
   "dependencies": {
     "is-number": "^6.0.0"
+  }
+}
+EOF
+elif [ "$VARIANT" = "code-fix" ]; then
+  # CommonJS app pinned to uuid@3, whose `uuid/v4` subpath disappears at uuid@14:
+  #   Error [ERR_PACKAGE_PATH_NOT_EXPORTED]: Package subpath './v4' is not defined
+  #   by "exports" in .../node_modules/uuid/package.json
+  # Both `typecheck` and `test` load src/index.cjs, so both go red on the upgrade
+  # and green only after the import is rewritten.
+  mkdir -p scripts src
+  cat > src/index.cjs <<'EOF'
+const uuidv4 = require('uuid/v4');
+const isNumber = require('is-number');
+
+const isNumeric = value => isNumber(value);
+
+const newId = () => uuidv4();
+
+module.exports = { isNumeric, newId };
+EOF
+  cat > scripts/typecheck.cjs <<'EOF'
+const { readFileSync } = require('node:fs');
+const { join } = require('node:path');
+
+const root = join(__dirname, '..');
+
+const version = JSON.parse(readFileSync(join(root, 'node_modules/is-number/package.json'), 'utf8')).version;
+
+console.log(`typecheck ok (is-number@${version})`);
+
+try {
+  require(join(root, 'src/index.cjs'));
+} catch (error) {
+  const detail = String(error.message).split('\n')[0];
+  console.error(`error TS2307: cannot resolve module from src/index.cjs: ${error.code || error.name}: ${detail}`);
+  process.exit(1);
+}
+
+if (!version.startsWith('7.')) {
+  console.error(`error TS2307: installed is-number@${version} does not match the declared range`);
+  process.exit(1);
+}
+
+console.log(`typecheck ok (is-number@${version})`);
+EOF
+  cat > scripts/test.cjs <<'EOF'
+const { isNumeric, newId } = require('../src/index.cjs');
+
+const cases = [
+  [isNumeric('42'), true],
+  [isNumeric('abc'), false]
+];
+
+for (const [actual, expected] of cases) {
+  if (actual !== expected) {
+    console.error(`assertion failed: expected ${expected}, got ${actual}`);
+    process.exit(1);
+  }
+}
+
+const id = newId();
+
+if (typeof id !== 'string' || id.length !== 36) {
+  console.error(`assertion failed: newId() returned ${JSON.stringify(id)}`);
+  process.exit(1);
+}
+
+console.log(`test ok (${cases.length + 1} assertions)`);
+EOF
+  cat > package.json <<'EOF'
+{
+  "name": "fixture-app",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@12.8.1",
+  "scripts": {
+    "typecheck": "node scripts/typecheck.cjs",
+    "test": "node scripts/test.cjs"
+  },
+  "dependencies": {
+    "is-number": "6.0.0",
+    "uuid": "3.4.0"
   }
 }
 EOF

@@ -107,32 +107,77 @@ pnpm test        # 仅当 scripts 里有
 
 按项目实际定义的脚本执行,不要臆造命令名。任一失败:分析原因(升级导致的 breaking change 优先怀疑),能修就修并重跑;修不动就把失败输出和判断交给用户,不要提交一个已知红的状态。
 
+**这一步最容易被忽略的后半截**:修代码时会改动依赖清单以外的文件。把这些文件记下来 —— 它们不属于依赖升级提交,要放到第 6 步的第二个提交里。不要现在就 `git add`,更不要在提交前把它们改回去。
+
 ### 6. 提交并推送
 
 先确认这次**真的升级了依赖**,而不是只装了依赖:
 
 ```bash
-git diff HEAD -- package.json    # 必须能看到版本范围的变化
+# 版本范围发生变化的清单(工作区项目要连子包一起看)
+git diff HEAD -- package.json '*/package.json' pnpm-lock.yaml
 ```
 
-如果 `package.json` 没有任何版本变化(典型症状:第 2 步升级失败过却没重跑,提交里只有 `pnpm-lock.yaml` 和 `pnpm-workspace.yaml`),那就没有东西可提交成"依赖升级"。此时停下来回到第 2 步把升级补上,或者明确告诉用户本次没有可升级的依赖并终止 —— 不要用 `chore(deps): update deps` 记录一次没有升级的提交,那会污染历史,也让日后回溯"这个版本到底升了什么"变成考古。
+如果 `package.json` 没有任何版本变化(典型症状:第 2 步升级失败过却没重跑,改动里只有 `pnpm-lock.yaml` 和 `pnpm-workspace.yaml`),那就没有东西可提交成"依赖升级"。此时停下来回到第 2 步把升级补上,或者明确告诉用户本次没有可升级的依赖并终止 —— 不要用 `chore(deps): update deps` 记录一次没有升级的提交,那会污染历史,也让日后回溯"这个版本到底升了什么"变成考古。
 
-确认有版本变化后再:
+确认有版本变化后,**分两个提交**,不要合并成一个:
+
+#### 6a. 依赖升级:只提交依赖清单
 
 ```bash
-git add -A
+# 只暂存依赖清单(工作区项目连子包清单一起带)。
+# 不要在没命中文件时用 '*/package.json' 这种裸通配符 —— 一个都没匹配到时
+# git 会直接报 "fatal: pathspec ... did not match any files" 并中断。
+git ls-files -co --exclude-standard \
+  | grep -E '(^|/)(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$' \
+  | xargs -r git add --
+git diff --cached --name-only    # 自检:这里不应该出现 src/ 等业务代码
 git commit -m "chore(deps): update deps"
+```
+
+- 只暂存依赖清单(`package.json`、锁文件、`pnpm-workspace.yaml`),**不要** `git add -A`。业务代码的适配改动留给 6b。
+- 提交前用 `git diff --cached --name-only` 看一眼:出现 `src/`、`*.ts`、`*.js` 就说明混进去了,`git restore --staged <file>` 退出来。
+- 提交信息固定为 `chore(deps): update deps`。
+- **被钩子拦下时用 `--no-verify` 跳过**:这一条是 ncu 与 pnpm 机械生成的版本号变更,`lint-staged` / `pre-commit` / `commit-msg` 对它没有意义。
+
+  ```bash
+  git commit --no-verify -m "chore(deps): update deps"
+  ```
+
+  只在这一条上跳过钩子。**不要**为了让钩子过去而顺手改动依赖以外的文件 —— 那是把代码修复藏进机械提交里,和直接混提交一样糟。钩子失败的原因若与这次清单变更无关(例如钩子本身坏了、依赖缺失),先修钩子,不要用 `--no-verify` 掩盖。
+
+#### 6b. 代码适配:按改动分类,正常走钩子
+
+剩下的改动是人为修复,必须单独成提交,并且**正常走钩子**(不要 `--no-verify`):
+
+```bash
+git status --porcelain        # 看还剩什么
+git diff                      # 逐项分类
+```
+
+按改动性质拆开,每类一个提交,提交信息遵循**项目自己的规范**(仓库 `AGENTS.md` / commitlint / `soy git-commit-verify` 怎么要求就怎么写);项目没有明确规定时,用英文 Conventional Commits:
+
+- 升级导致 API 变化、需要改调用方 → `fix(<scope>)` 或 `refactor(<scope>)`
+- 纯类型/兼容性修补、补 `allowBuilds` 之外的配置 → `fix(<scope>)` / `chore(<scope>)`
+- 只有文档或注释改动 → `docs(<scope>)`
+
+第 5 步如果什么都没改,直接跳过 6b,**不要**为了凑一个提交而制造空提交。
+
+#### 6c. 推送
+
+两个提交都完成后统一推送:
+
+```bash
 git push
 ```
 
-- 提交信息固定为 `chore(deps): update deps`。
 - 没有上游分支时用 `git push -u origin HEAD`。
 - 推送被拒(远端有新提交)时,先 `git pull --rebase`,解决冲突后重跑第 5 步再推。
-- 确认 `git status --porcelain` 为空、远端分支包含该提交。
+- 确认 `git status --porcelain` 为空、远端分支包含这两个提交。
 
 ## 汇报
 
-结束时给用户一份简报,包含:升级涉及的包与版本变化(`git diff` 里的 `package.json` 段)、本次判断为工作区还是单包项目(即是否带 `-w`)、安装过程中解决的错误(尤其新增的 `allowBuilds` 条目及其取值理由)、typecheck/test 结果、提交哈希与推送目标分支。有跳过的步骤(没有 typecheck/test)要显式说明。
+结束时给用户一份简报,包含:升级涉及的包与版本变化(`git diff` 里的清单段)、本次判断为工作区还是单包项目(即是否带 `-w`)、安装过程中解决的错误(尤其新增的 `allowBuilds` 条目及其取值理由)、typecheck/test 结果、**每个提交的哈希与消息**(升级提交、以及为适配升级而改的代码提交各是什么)、推送目标分支。有跳过的步骤(没有 typecheck/test、没有代码适配提交)要显式说明。
 
 ## 反例
 
@@ -143,5 +188,10 @@ git push
 - 遇到 `ERR_PNPM_IGNORED_BUILDS` 就 `--all` 放行,或在 `pnpm-workspace.yaml` 里批量写 `true`。
 - 升级命令因隐式安装报错而失败后,不确认 `package.json` 是否真的改过就继续,最后提交一个只装了依赖、没升版本的"假升级"提交。
 - 提交前不检查 `package.json` 有无版本变化。
+- 用 `git add -A` 一次提交,**把升级依赖和适配升级的代码修复混在同一个 `chore(deps): update deps` 里** —— 这样既没法单独 revert 升级,也没法在 review 里区分机械变更和人为修复。
+- 依赖升级提交里混进 `src/` 等业务文件(提交前不跑 `git diff --cached --name-only` 自检)。
+- 用 `git commit --amend` 把代码修复并进上一条 deps 提交,让两个提交又变成一个。
+- 为了让 `lint-staged` / `commit-msg` 钩子通过,去修改依赖以外的文件;正确做法是这一条机械提交用 `--no-verify`,代码修复另开提交正常走钩子。
+- 对代码适配的提交也加 `--no-verify`,把人为改动绕开项目的检查。
 - typecheck/test 失败仍然提交推送。
 - 把 `pnpm clean --lockfile` 与 `pnpm i` 拆成两次判断,`clean` 成功、`i` 失败却继续往下走。
