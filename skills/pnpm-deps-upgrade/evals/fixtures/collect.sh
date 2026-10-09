@@ -14,6 +14,11 @@ VARIANT="${3:?usage: collect.sh <repo> <outputs-dir> <variant>}"
 mkdir -p "$OUT"
 cd "$REPO" || exit 1
 
+# The invocation log (how the agent ran the upgrade) is captured by the harness and
+# copied in as outputs/transcript.md when available; state.json keeps only the
+# observable end state plus a best-effort slice of that log.
+TRANSCRIPT_SRC="$OUT/transcript.md"
+
 BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
 HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || echo '')"
 COMMIT_COUNT="$(git rev-list --count HEAD 2>/dev/null || echo 0)"
@@ -39,6 +44,15 @@ INSTALL_EXIT="skipped"
 if [ -f pnpm-lock.yaml ]; then
   pnpm install --frozen-lockfile > "$OUT/install.txt" 2>&1
   INSTALL_EXIT="$?"
+fi
+
+if [ -f "$TRANSCRIPT_SRC" ]; then
+  # Keep every line that shows HOW the upgrade ran (the command itself when the
+  # harness logs it) and WHAT ncu touched (its "Upgrading <pkg>/package.json"
+  # lines) — that is the only observable proof of whether `-w` was used and
+  # whether the workspace child was reached.
+  grep -nE "npm-check-updates|-u -w|pnpx?|pnx |upkg|Upgrading|workspaces property missing" "$TRANSCRIPT_SRC" \
+    | head -80 > "$OUT/invocation.txt" 2>/dev/null || true
 fi
 
 {
@@ -100,9 +114,19 @@ fi
   git diff HEAD -- . ':(exclude)pnpm-lock.yaml' | head -200 || true
   echo '```'
   echo
+  echo '## nested package.json (workspace children)'
+  echo '```json'
+  find . -name package.json -not -path './node_modules/*' -not -path './package.json' 2>/dev/null | sort | while read -r f; do echo "--- $f"; grep -E '"(dependencies|devDependencies)"|is-number|esbuild' "$f" 2>/dev/null || true; done
+  echo '```'
+  echo
   echo '## tracked files'
   echo '```'
   git ls-files || true
+  echo '```'
+  echo
+  echo '## invocation log (grep-able slice)'
+  echo '```'
+  if [ -f "$TRANSCRIPT_SRC" ]; then grep -nE "npm-check-updates|npx?x? |pnx|upkg|Upgrading|workspaces property missing" "$TRANSCRIPT_SRC" | head -60 || true; else echo '(no transcript captured)'; fi
   echo '```'
 } > "$OUT/final-state.md"
 
@@ -139,6 +163,8 @@ state = {
     "test_exit": tt,
     "frozen_install_exit": inst,
     "deps": {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})},
+    "deps_by_package": {},
+    "workspace_package_jsons": [],
     "workspace_yaml": ws,
     "allow_builds": {},
     "dangerously_allow_all": "dangerouslyAllowAllBuilds" in ws,
@@ -149,7 +175,26 @@ state = {
     "tracked_files": subprocess.run(["git", "ls-files"], capture_output=True, text=True).stdout.split(),
     "git_status_porcelain": subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True).stdout.splitlines(),
     "report": (Path(out) / "report.md").read_text() if (Path(out) / "report.md").exists() else "",
+    "transcript_slice": (Path(out) / "invocation.txt").read_text() if (Path(out) / "invocation.txt").exists() else "",
 }
+
+state["deps_by_package"]["package.json"] = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+
+# Merge every nested package.json (workspace children) into `deps` so the happy
+# fixture, whose only stale dependency lives in packages/lib, is visible here.
+# node_modules and build output are skipped; the root manifest wins on conflict.
+for nested in sorted(repo.rglob("package.json")):
+    if "node_modules" in nested.parts or nested.parent == repo:
+        continue
+    try:
+        nested_pkg = json.loads(nested.read_text())
+    except (OSError, ValueError):
+        continue
+    rel = str(nested.relative_to(repo))
+    nested_deps = {**nested_pkg.get("dependencies", {}), **nested_pkg.get("devDependencies", {})}
+    state["deps_by_package"][rel] = nested_deps
+    state["workspace_package_jsons"].append(rel)
+    state["deps"] = {**nested_deps, **state["deps"]}
 
 block = re.search(r"^allowBuilds:\n((?:[ \t]+.*\n?)*)", ws, re.M)
 if block:

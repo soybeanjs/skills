@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Programmatic grading for the pnpm-deps-upgrade skill evals.
-
 Reads each run's outputs/state.json (+ report.md) and evaluates the assertions
 declared in evals/evals.json. Writes grading.json next to each state.json.
 
@@ -47,9 +46,26 @@ def grade(run: dict) -> dict:
     def aborted_cleanly():
         return nothing_pushed() and s["last_subject"] == INITIAL_SUBJECT
 
+    def invocation_seen(*needles: str) -> bool:
+        """True when the run's invocation log mentions any of the given needles."""
+        log = s.get("transcript_slice") or ""
+        return any(n in log for n in needles)
+
+    def is_workspace() -> bool:
+        """happy is a real workspace; every other variant is a single package."""
+        return v == "happy"
+
+    def child_deps(package_json_path: str) -> dict:
+        """Deps declared in one specific package.json, relative to the repo root."""
+        return (s.get("deps_by_package") or {}).get(package_json_path, {})
+
     if v == "happy":
-        add("package.json 中 is-number 的版本范围被升级为 ^7.0.0",
-            deps.get("is-number") == "^7.0.0", f"is-number={deps.get('is-number')!r}")
+        add("packages/lib/package.json 中 is-number 的版本范围被升级为 ^7.0.0",
+            child_deps("packages/lib/package.json").get("is-number") == "^7.0.0",
+            f"packages/lib is-number={child_deps('packages/lib/package.json').get('is-number')!r}")
+        add("升级命令覆盖了工作区子包(ncu 执行记录中出现 packages/lib)",
+            invocation_seen("packages/lib"),
+            "invocation log mentions packages/lib: " + ("yes" if invocation_seen("packages/lib") else "no"))
         add("pnpm-lock.yaml 按升级后的版本重新生成",
             s["lockfile_has_is_number_v7"], f"lockfile has is-number@7: {s['lockfile_has_is_number_v7']}")
         add("typecheck 与 test 均执行且通过",
@@ -63,18 +79,19 @@ def grade(run: dict) -> dict:
         add("结束时工作区无未提交改动",
             not s["git_status_porcelain"], f"porcelain={s['git_status_porcelain']}")
 
-    elif v == "no-upkg":
-        add("package.json 中 is-number 的版本范围保持 6.0.0 未变",
-            deps.get("is-number") == "6.0.0", f"is-number={deps.get('is-number')!r}")
-        add("未产生任何新提交",
-            s["commit_count"] == INITIAL_COMMIT_COUNT and s["last_subject"] == INITIAL_SUBJECT,
-            f"commit_count={s['commit_count']}, last_subject={s['last_subject']!r}")
-        add("未向远端推送任何提交",
-            nothing_pushed(),
-            f"remote_head={s['remote_head']!r}, commit_count={s['commit_count']}")
-        add("明确向用户说明项目缺少 upkg 脚本并终止任务",
-            "upkg" in report and any(k in report for k in ("没有", "缺少", "未定义", "不存在", "missing", "not defined")),
-            "report mentions missing upkg: " + ("yes" if "upkg" in report else "no"))
+    elif v == "single-package":
+        add("package.json 中 is-number 的版本范围被升级为 7.0.0",
+            deps.get("is-number") == "7.0.0", f"is-number={deps.get('is-number')!r}")
+        add("未对非工作区使用 -w(执行记录中不出现 workspaces property missing from package.json)",
+            not invocation_seen("workspaces property missing from package.json"),
+            "invocation log shows the -w failure: "
+            + ("yes" if invocation_seen("workspaces property missing from package.json") else "no"))
+        add("typecheck 与 test 均执行且通过",
+            s["typecheck_exit"] == "0" and s["test_exit"] == "0",
+            f"typecheck_exit={s['typecheck_exit']}, test_exit={s['test_exit']}")
+        add("存在一条提交信息恰为 chore(deps): update deps 的提交并已推送到远端",
+            s["last_subject"] == "chore(deps): update deps" and pushed_head(),
+            f"last_subject={s['last_subject']!r}, remote_contains_head={s['remote_contains_head']}")
 
     elif v == "dirty":
         add("src/wip.js 仍存在于工作区且内容未被改动",
@@ -117,7 +134,7 @@ def grade(run: dict) -> dict:
             "report mentions typecheck failure: " + ("yes" if "typecheck" in report else "no"))
 
     elif v == "no-op-upgrade":
-        add("package.json 的版本范围保持 ^7.0.0 / ^0.21.5 未变",
+        add("package.json 的版本范围保持 ^7.0.0 未变",
             deps.get("is-number") == "^7.0.0",
             f"is-number={deps.get('is-number')!r}")
         add("未产生提交信息为 chore(deps): update deps 的提交",

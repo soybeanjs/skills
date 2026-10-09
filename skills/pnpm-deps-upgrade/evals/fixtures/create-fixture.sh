@@ -7,12 +7,17 @@
 #   <dest-dir>/repo       <- the project root (pass THIS to agents as the repo path)
 #   <dest-dir>/origin.git <- bare remote, already wired up as `origin`
 #
-# Variants:
-#   happy           clean tree, upkg + typecheck + test all present and passing
-#   no-upkg         clean tree, no `upkg` script (must abort)
+# Variants (the skill drives `pnx npm-check-updates -u [-w]`, so fixtures encode
+# whether the correct run needs `-w` or must not use it):
+#   happy           pnpm workspace (pnpm-workspace.yaml + packages/lib); the stale
+#                   dependency lives in the CHILD package, so a run without `-w`
+#                   changes nothing and the upgrade only lands with `-u -w`
+#   single-package  plain project, stale dependency at the root; must use `-u`
+#                   WITHOUT `-w` (ncu hard-fails otherwise)
 #   dirty           uncommitted work in the tree (must abort without touching it)
 #   allowbuilds     upgrade pulls in a dep whose build script pnpm blocks
 #   typecheck-fail  upgrade breaks typecheck (must not commit/push)
+#   no-op-upgrade   already at the latest versions (must not commit)
 #
 # NOTE for eval authors: the project root is <dest-dir>/repo, NOT <dest-dir>.
 # Pass the per-run config dir (e.g. iteration-2/eval-0-x/with_skill) as <dest-dir>
@@ -34,45 +39,16 @@ git config user.email "fixture@example.com"
 git config user.name "Fixture"
 git config commit.gpgsign false
 
-mkdir -p scripts src
-
 cat > .gitignore <<'EOF'
 node_modules
 EOF
 
-cat > src/index.js <<'EOF'
-import isNumber from 'is-number';
-
-export const isNumeric = value => isNumber(value);
-
-export const isNumericString = value => typeof value === 'string' && isNumber(Number(value));
-EOF
-
-if [ "$VARIANT" != "no-upkg" ]; then
-  # Stub `upkg`: mimics `soy ncu` — rewrites stale ranges in package.json in place.
-  cat > scripts/upkg.mjs <<'EOF'
-import { readFileSync, writeFileSync } from 'node:fs';
-
-const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
-const bumps = { 'is-number': '^7.0.0', esbuild: '^0.21.5' };
-const touched = [];
-
-for (const field of ['dependencies', 'devDependencies']) {
-  for (const [name, range] of Object.entries(pkg[field] ?? {})) {
-    if (bumps[name] && pkg[field][name] !== bumps[name]) {
-      touched.push(`${name}: ${pkg[field][name]} -> ${bumps[name]}`);
-      pkg[field][name] = bumps[name];
-    }
-  }
-}
-
-writeFileSync('package.json', `${JSON.stringify(pkg, null, 2)}\n`);
-console.log(touched.length ? touched.join('\n') : 'All dependencies match the latest package versions');
-EOF
-fi
-
-# Stub `typecheck`: verifies the upgraded dependency actually landed in node_modules.
-cat > scripts/typecheck.mjs <<'EOF'
+# `typecheck` verifies the upgraded dependency actually landed in node_modules.
+# It reads is-number relative to the cwd of the script that runs it, which is the
+# package that declares the dependency in both the workspace and single-package
+# fixtures.
+write_typecheck() {
+  cat > "$1/typecheck.mjs" <<'EOF'
 import { readFileSync } from 'node:fs';
 
 const version = JSON.parse(readFileSync('node_modules/is-number/package.json', 'utf8')).version;
@@ -84,8 +60,10 @@ if (!version.startsWith('7.')) {
 
 console.log(`typecheck ok (is-number@${version})`);
 EOF
+}
 
-cat > scripts/test.mjs <<'EOF'
+write_test() {
+  cat > "$1/test.mjs" <<'EOF'
 import { isNumeric, isNumericString } from '../src/index.js';
 
 const cases = [
@@ -104,6 +82,101 @@ for (const [actual, expected] of cases) {
 
 console.log(`test ok (${cases.length} assertions)`);
 EOF
+}
+
+write_src() {
+  cat > "$1/index.js" <<'EOF'
+import isNumber from 'is-number';
+
+export const isNumeric = value => isNumber(value);
+
+export const isNumericString = value => typeof value === 'string' && isNumber(Number(value));
+EOF
+}
+
+# --- shared leaf package layout: scripts/ + src/ next to each other -----------
+write_leaf() {
+  local dir="$1"
+  mkdir -p "$dir/scripts" "$dir/src"
+  write_typecheck "$dir/scripts"
+  write_test "$dir/scripts"
+  write_src "$dir/src"
+}
+
+if [ "$VARIANT" = "happy" ]; then
+  # Workspace: only the child package is stale. A run that forgets `-w` finds
+  # nothing to upgrade (ncu prints "No dependencies."), which the grader catches.
+  mkdir -p packages/lib
+  write_leaf packages/lib
+  cat > pnpm-workspace.yaml <<'EOF'
+packages:
+  - packages/lib
+EOF
+  cat > package.json <<'EOF'
+{
+  "name": "fixture-root",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@12.8.1",
+  "scripts": {
+    "typecheck": "pnpm -C packages/lib run typecheck",
+    "test": "pnpm -C packages/lib run test"
+  }
+}
+EOF
+  cat > packages/lib/package.json <<'EOF'
+{
+  "name": "lib",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "node scripts/typecheck.mjs",
+    "test": "node scripts/test.mjs"
+  },
+  "dependencies": {
+    "is-number": "^6.0.0"
+  }
+}
+EOF
+elif [ "$VARIANT" = "single-package" ]; then
+  # No workspaces field, no `packages:` key: `-w` would make ncu fail with
+  # "workspaces property missing from package.json".
+  write_leaf .
+  cat > package.json <<'EOF'
+{
+  "name": "fixture-app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "pnpm@12.8.1",
+  "scripts": {
+    "typecheck": "node scripts/typecheck.mjs",
+    "test": "node scripts/test.mjs"
+  },
+  "dependencies": {
+    "is-number": "6.0.0"
+  }
+}
+EOF
+else
+  write_leaf .
+  cat > package.json <<'EOF'
+{
+  "name": "fixture-app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "pnpm@12.8.1",
+  "scripts": {
+    "typecheck": "node scripts/typecheck.mjs",
+    "test": "node scripts/test.mjs"
+  },
+  "dependencies": {
+    "is-number": "6.0.0"
+  }
+}
+EOF
+fi
 
 if [ "$VARIANT" = "typecheck-fail" ]; then
   cat > scripts/typecheck.mjs <<'EOF'
@@ -115,28 +188,8 @@ process.exit(1);
 EOF
 fi
 
-FIXTURE_UPKG="$([ "$VARIANT" = "no-upkg" ] && echo off || echo on)" node -e '
-const fs = require("node:fs");
-const scripts = {
-  typecheck: "node scripts/typecheck.mjs",
-  test: "node scripts/test.mjs"
-};
-if (process.env.FIXTURE_UPKG !== "off") scripts.upkg = "node scripts/upkg.mjs";
-
-const pkg = {
-  name: "fixture-app",
-  private: true,
-  version: "0.0.0",
-  type: "module",
-  packageManager: "pnpm@12.8.1",
-  scripts,
-  dependencies: { "is-number": "6.0.0" }
-};
-fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
-'
-
 if [ "$VARIANT" = "no-op-upgrade" ]; then
-  # Already at the versions the `upkg` stub targets, so a correct run has nothing to upgrade
+  # Already at the versions ncu targets, so a correct run has nothing to upgrade
   # and must NOT produce a "chore(deps): update deps" commit.
   node -e '
 const fs = require("node:fs");
@@ -147,6 +200,8 @@ fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
 fi
 
 if [ "$VARIANT" = "allowbuilds" ]; then
+  # pnpm-workspace.yaml WITHOUT a `packages:` key: this project is NOT a workspace,
+  # which also exercises the `-w` guard.
   cat > pnpm-workspace.yaml <<'EOF'
 shamefullyHoist: true
 EOF
